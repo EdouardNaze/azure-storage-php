@@ -94,6 +94,10 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
      * @var int Defaults to 32MB
      */
     private $_SingleBlobUploadThresholdInBytes = 33554432 ;
+    /**
+     * @var int Defaults to 4MB
+     */
+    private $_SingleAppendBlobUploadThresholdInBytes = 4194304 ;
 
     /**
      * Get the value for SingleBlobUploadThresholdInBytes
@@ -103,6 +107,15 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
     public function getSingleBlobUploadThresholdInBytes()
     {
         return $this->_SingleBlobUploadThresholdInBytes;
+    }
+    /**
+     * Get the value for SingleAppendBlobUploadThresholdInBytes
+     *
+     * @return int
+     */
+    public function getSingleAppendBlobUploadThresholdInBytes()
+    {
+        return $this->_SingleAppendBlobUploadThresholdInBytes;
     }
 
     /**
@@ -1254,6 +1267,125 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
         
         return CopyBlobResult::create(HttpFormatter::formatHeaders($response->getHeaders()));
     }
+
+    public function initAppendBlob($container, $blob, $length=null, $options = null)
+    {
+        Validate::isString($container, 'container');
+        Validate::isString($blob, 'blob');
+        Validate::notNullOrEmpty($blob, 'blob');
+        Validate::isInteger($length, 'length');
+
+        $method      = Resources::HTTP_PUT;
+        $headers     = array();
+        $postParams  = array();
+        $queryParams = array();
+        $path        = $this->_createPath($container, $blob);
+        $statusCode  = Resources::STATUS_CREATED;
+
+        if (is_null($options)) {
+            $options = new CreateBlobOptions();
+        }
+
+        $this->addOptionalHeader(
+            $headers,
+            Resources::X_MS_BLOB_TYPE,
+            BlobType::APPEND_BLOB
+        );
+        $this->addOptionalHeader(
+            $headers,
+            Resources::X_MS_BLOB_CONTENT_LENGTH,
+            $length
+        );
+        $this->addOptionalHeader(
+            $headers,
+            Resources::X_MS_BLOB_SEQUENCE_NUMBER,
+            $options->getSequenceNumber()
+        );
+        $headers = $this->_addCreateBlobOptionalHeaders($options, $headers);
+
+        $this->addOptionalQueryParam(
+            $queryParams,
+            Resources::QP_TIMEOUT,
+            $options->getTimeout()
+        );
+
+        $response = $this->send(
+            $method,
+            $headers,
+            $queryParams,
+            $postParams,
+            $path,
+            $statusCode
+        );
+
+        return CopyBlobResult::create(HttpFormatter::formatHeaders($response->getHeaders()));
+    }
+
+    public function createAppendBlob($container, $blob, $content, $offset = null, $options = null)
+    {
+        Validate::isString($container, 'container');
+        Validate::isString($blob, 'blob');
+        Validate::notNullOrEmpty($blob, 'blob');
+        Validate::isTrue(
+            is_string($content) || is_resource($content),
+            sprintf(Resources::INVALID_PARAM_MSG, 'content', 'string|resource')
+        );
+
+        $method      = Resources::HTTP_PUT;
+        $headers     = array();
+        $postParams  = array();
+        $queryParams = array();
+        $bodySize    = false;
+        $path        = $this->_createPath($container, $blob);
+        $statusCode  = Resources::STATUS_CREATED;
+
+        if (is_null($options)) {
+            $options = new CreateBlobOptions();
+        }
+
+        if (is_resource($content)) {
+            $cStat = fstat($content);
+            // if the resource is a remote file, $cStat will be false
+            if ($cStat) {
+                $bodySize = $cStat['size'];
+            }
+        } else {
+            $bodySize = strlen($content);
+        }
+
+        // if we have a size we can try to one shot this, else failsafe on block upload
+            $headers = $this->_addCreateBlobOptionalHeaders($options, $headers);
+
+            $this->addOptionalHeader(
+                $headers,
+                Resources::X_MS_BLOB_TYPE,
+                BlobType::APPEND_BLOB
+            );
+
+            //$headers = $this->_addCreateBlobOptionalHeaders($options, $headers);
+
+
+            $this->addOptionalQueryParam(
+                $queryParams,
+                Resources::QP_TIMEOUT,
+                $options->getTimeout()
+            );
+        $this->addOptionalQueryParam($queryParams, Resources::QP_COMP, 'appendblock');
+
+            // If read file failed for any reason it will throw an exception.
+            $body = is_resource($content) ? stream_get_contents($content) : $content;
+
+            $response = $this->send(
+                $method,
+                $headers,
+                $queryParams,
+                $postParams,
+                $path,
+                $statusCode,
+                $body
+            );
+        return CopyBlobResult::create(HttpFormatter::formatHeaders($response->getHeaders()));
+    }
     
     /**
      * Creates a new block blob or updates the content of an existing block blob.
@@ -1283,7 +1415,7 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
             is_string($content) || is_resource($content),
             sprintf(Resources::INVALID_PARAM_MSG, 'content', 'string|resource')
         );
-        
+
         $method      = Resources::HTTP_PUT;
         $headers     = array();
         $postParams  = array();
@@ -1291,11 +1423,11 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
         $bodySize    = false;
         $path        = $this->_createPath($container, $blob);
         $statusCode  = Resources::STATUS_CREATED;
-        
+
         if (is_null($options)) {
             $options = new CreateBlobOptions();
         }
-        
+
         if (is_resource($content)) {
             $cStat = fstat($content);
             // if the resource is a remote file, $cStat will be false
@@ -1309,7 +1441,7 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
         // if we have a size we can try to one shot this, else failsafe on block upload
         if (is_int($bodySize) && $bodySize <= $this->_SingleBlobUploadThresholdInBytes) {
             $headers = $this->_addCreateBlobOptionalHeaders($options, $headers);
-            
+
             $this->addOptionalHeader(
                 $headers,
                 Resources::X_MS_BLOB_TYPE,
@@ -1325,11 +1457,11 @@ class BlobRestProxy extends ServiceRestProxy implements IBlob
             $body = is_resource($content) ? stream_get_contents($content) : $content;
 
             $response = $this->send(
-                $method, 
-                $headers, 
-                $queryParams, 
+                $method,
+                $headers,
+                $queryParams,
                 $postParams,
-                $path, 
+                $path,
                 $statusCode,
                 $body
             );
