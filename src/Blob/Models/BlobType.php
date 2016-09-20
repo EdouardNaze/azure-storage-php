@@ -39,6 +39,7 @@ class BlobType
 {
     const BLOCK_BLOB = 'BlockBlob';
     const PAGE_BLOB  = 'PageBlob';
+    const APPEND_BLOB  = 'AppendBlob';
 }
 
 
